@@ -1,0 +1,128 @@
+--- git status ---
+On branch master
+Your branch is up to date with 'origin/master'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   scripts/rsl_rl/play.py
+	modified:   source/unitree_rl_lab/unitree_rl_lab/assets/robots/unitree.py
+	modified:   source/unitree_rl_lab/unitree_rl_lab/tasks/locomotion/mdp/rewards.py
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	source/unitree_rl_lab/unitree_rl_lab/tasks/locomotion/robots/g1/23dof/23dof_military_march/
+
+no changes added to commit (use "git add" and/or "git commit -a") 
+
+
+--- git diff ---
+diff --git a/scripts/rsl_rl/play.py b/scripts/rsl_rl/play.py
+index 804b0fb..7dc807f 100644
+--- a/scripts/rsl_rl/play.py
++++ b/scripts/rsl_rl/play.py
+@@ -56,7 +56,7 @@ import isaaclab_tasks  # noqa: F401
+ from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
+ from isaaclab.utils.assets import retrieve_file_path
+ from isaaclab.utils.dict import print_dict
+-from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
++#from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
+ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
+ from isaaclab_tasks.utils import get_checkpoint_path
+ 
+@@ -80,12 +80,12 @@ def main():
+     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
+     log_root_path = os.path.abspath(log_root_path)
+     print(f"[INFO] Loading experiment from directory: {log_root_path}")
+-    if args_cli.use_pretrained_checkpoint:
+-        resume_path = get_published_pretrained_checkpoint("rsl_rl", args_cli.task)
+-        if not resume_path:
+-            print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
+-            return
+-    elif args_cli.checkpoint:
++    #if args_cli.use_pretrained_checkpoint:
++    #    resume_path = get_published_pretrained_checkpoint("rsl_rl", args_cli.task)
++    #    if not resume_path:
++    #        print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
++    #        return
++    if args_cli.checkpoint:
+         resume_path = retrieve_file_path(args_cli.checkpoint)
+     else:
+         resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+diff --git a/source/unitree_rl_lab/unitree_rl_lab/assets/robots/unitree.py b/source/unitree_rl_lab/unitree_rl_lab/assets/robots/unitree.py
+index 090aa4f..4e1f5db 100644
+--- a/source/unitree_rl_lab/unitree_rl_lab/assets/robots/unitree.py
++++ b/source/unitree_rl_lab/unitree_rl_lab/assets/robots/unitree.py
+@@ -17,8 +17,8 @@ from isaaclab.utils import configclass
+ 
+ from unitree_rl_lab.assets.robots import unitree_actuators
+ 
+-UNITREE_MODEL_DIR = "/home/roberto/unitree_model"  # Replace with the actual path to your unitree_model directory
+-UNITREE_ROS_DIR = "/home/roberto/unitree_ros"  # Replace with the actual path to your unitree_ros package
++UNITREE_MODEL_DIR = "/home/user/unitree_model"  # Replace with the actual path to your unitree_model directory
++UNITREE_ROS_DIR = "/home/user/unitree_ros"  # Replace with the actual path to your unitree_ros package
+ 
+ 
+ @configclass
+diff --git a/source/unitree_rl_lab/unitree_rl_lab/tasks/locomotion/mdp/rewards.py b/source/unitree_rl_lab/unitree_rl_lab/tasks/locomotion/mdp/rewards.py
+index 95ddd8a..289a317 100644
+--- a/source/unitree_rl_lab/unitree_rl_lab/tasks/locomotion/mdp/rewards.py
++++ b/source/unitree_rl_lab/unitree_rl_lab/tasks/locomotion/mdp/rewards.py
+@@ -223,3 +223,56 @@ def joint_mirror(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, mirror_joint
+         )
+     reward *= 1 / len(mirror_joints) if len(mirror_joints) > 0 else 0
+     return reward
++
++
++# ============================================================================
++# MILITARY MARCH GAIT - Custom Reward Functions
++# ============================================================================
++
++
++def arm_leg_coordination(
++    env: ManagerBasedRLEnv,
++    asset_cfg: SceneEntityCfg,
++    left_arm_joints: list[str],
++    right_arm_joints: list[str],
++    left_leg_joints: list[str],
++    right_leg_joints: list[str],
++) -> torch.Tensor:
++    """Penalize when arms don't swing opposite to legs (military march style)."""
++    asset: Articulation = env.scene[asset_cfg.name]
++
++    if not hasattr(env, "_arm_leg_coord_cache") or env._arm_leg_coord_cache is None:
++        env._arm_leg_coord_cache = {
++            "left_arm": [asset.find_joints(j) for j in left_arm_joints],
++            "right_arm": [asset.find_joints(j) for j in right_arm_joints],
++            "left_leg": [asset.find_joints(j) for j in left_leg_joints],
++            "right_leg": [asset.find_joints(j) for j in right_leg_joints],
++        }
++
++    cache = env._arm_leg_coord_cache
++    joint_pos = asset.data.joint_pos
++    default_pos = asset.data.default_joint_pos
++
++    reward = torch.zeros(env.num_envs, device=env.device)
++    for la, rl in zip(cache["left_arm"], cache["right_leg"]):
++        left_arm_delta = joint_pos[:, la[0]] - default_pos[:, la[0]]
++        right_leg_delta = joint_pos[:, rl[0]] - default_pos[:, rl[0]]
++        reward += torch.sum(torch.clamp(left_arm_delta * right_leg_delta, min=0), dim=-1)
++
++    for ra, ll in zip(cache["right_arm"], cache["left_leg"]):
++        right_arm_delta = joint_pos[:, ra[0]] - default_pos[:, ra[0]]
++        left_leg_delta = joint_pos[:, ll[0]] - default_pos[:, ll[0]]
++        reward += torch.sum(torch.clamp(right_arm_delta * left_leg_delta, min=0), dim=-1)
++
++    return reward
++
++
++def lateral_velocity_penalty(
++    env: ManagerBasedRLEnv,
++    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
++) -> torch.Tensor:
++    """Penalize lateral (side-to-side) body velocity."""
++    asset: RigidObject = env.scene[asset_cfg.name]
++    lin_vel_b = quat_apply_inverse(asset.data.root_quat_w, asset.data.root_lin_vel_w)
++    lateral_vel = lin_vel_b[:, 1]
++    return torch.square(lateral_vel)
+\ No newline at end of file
