@@ -226,50 +226,41 @@ class ObservationsCfg:
 
 @configclass
 class RewardsCfg:
-    """Reward terms for the MDP - Military March Phase 1: Learn to WALK."""
+    """Reward terms for the MDP - Phase 1: Learn to WALK (research-aligned)."""
 
-    # =====================================================================
-    # THE KEY FIX: Make velocity tracking much more dominant and
-    # add a direct penalty for standing still when commanded to move
-    # =====================================================================
-
-    # Velocity tracking - the MAIN reward
+    # -- VELOCITY TRACKING (moderate, not overwhelming)
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_yaw_frame_exp,
-        weight=8.0,      # WAS 5.0 — even stronger carrot
+        weight=1.5,          # WAS 8.0 — too dominant, now aligned with literature (1.0-1.5)
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
     track_ang_vel_z = RewTerm(
         func=mdp.track_ang_vel_z_exp, weight=1.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
     )
 
-    # NEW: Directly penalize standing still when commanded to move
-    # stand_still returns joint deviation * (cmd < 0.1), but we flip it:
-    # We use feet_contact_without_cmd which rewards ground contact ONLY when
-    # command is near zero. Since our commands are always > 0.3, this will
-    # be zero. Instead we add a direct body velocity reward below.
-
-    # NEW: Reward actual forward body velocity
-    # This uses lin_vel_z_l2 logic but we want FORWARD velocity rewarded.
-    # We'll use the feet_air_time reward - it directly rewards feet leaving
-    # the ground, which FORCES stepping.
+    # Feet air time — MUCH lower weight, higher threshold
+    # Official IsaacLab G1 uses 0.25 with threshold 0.4
     feet_air_time = RewTerm(
         func=mdp.feet_air_time,
-        weight=2.0,       # Strong reward for feet actually lifting off ground
+        weight=0.25,          # WAS 2.0 — way too high, caused one-leg-standing
         params={
             "command_name": "base_velocity",
-            "threshold": 0.2,
+            "threshold": 0.4,  # WAS 0.2 — higher threshold = must actually swing
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_roll.*"),
         },
     )
 
-    alive = RewTerm(func=mdp.is_alive, weight=0.1)  # WAS 0.25 — even less free reward
+    alive = RewTerm(func=mdp.is_alive, weight=0.15)
 
-    # -- base penalties: keep soft
-    base_linear_velocity = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
+    # -- CRITICAL ADDITION: termination penalty
+    # Heavy cost for falling — makes the robot strongly prefer staying upright
+    termination_penalty = RewTerm(func=mdp.is_terminated, weight=-200.0)
+
+    # -- Base penalties
+    base_linear_velocity = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)    # WAS -1.0, now stronger
     base_angular_velocity = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
-    joint_vel = RewTerm(func=mdp.joint_vel_l2, weight=-0.0005)
-    joint_acc = RewTerm(func=mdp.joint_acc_l2, weight=-0.1e-7)
+    joint_vel = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)
+    joint_acc = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)            # Slightly stronger
     action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-5.0)
     energy = RewTerm(func=mdp.energy, weight=-1e-5)
@@ -290,7 +281,7 @@ class RewardsCfg:
     )
     joint_deviation_waists = RewTerm(
         func=mdp.joint_deviation_l1,
-        weight=-0.5,     # WAS -1.0 — softer still
+        weight=-0.1,          # WAS -0.5, softer to allow torso adjustment
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -302,14 +293,14 @@ class RewardsCfg:
     )
     joint_deviation_legs = RewTerm(
         func=mdp.joint_deviation_l1,
-        weight=-0.01,
+        weight=-0.1,          # WAS -0.01, now matches official config
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_roll_joint", ".*_hip_yaw_joint"])},
     )
 
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-3.0)  # WAS -5.0
-    base_height = RewTerm(func=mdp.base_height_l2, weight=-5.0, params={"target_height": 0.65})
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)   # WAS -3.0, softer
+    base_height = RewTerm(func=mdp.base_height_l2, weight=-10.0, params={"target_height": 0.78})  # WAS 0.65, -5.0
 
-    # Gait - light touch
+    # Gait
     gait = RewTerm(
         func=mdp.feet_gait,
         weight=0.5,
@@ -333,11 +324,11 @@ class RewardsCfg:
 
     feet_clearance = RewTerm(
         func=mdp.foot_clearance_reward,
-        weight=0.5,      # WAS 1.0 — reduced, walking is priority
+        weight=0.5,
         params={
             "std": 0.05,
             "tanh_mult": 2.0,
-            "target_height": 0.1,  # WAS 0.15 — very modest, just step off ground
+            "target_height": 0.1,
             "asset_cfg": SceneEntityCfg("robot", body_names=".*ankle_roll.*"),
         },
     )
@@ -350,7 +341,7 @@ class RewardsCfg:
 
     air_time_symmetry = RewTerm(
         func=mdp.air_time_variance_penalty,
-        weight=-0.1,     # WAS -0.2 — even softer
+        weight=-0.1,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_roll.*"),
         },
@@ -358,7 +349,7 @@ class RewardsCfg:
 
     lateral_sway = RewTerm(
         func=mdp.lateral_velocity_penalty,
-        weight=-0.3,     # WAS -0.5 — even softer
+        weight=-0.3,
     )
 
     undesired_contacts = RewTerm(
