@@ -1,0 +1,96 @@
+# Kimodo Pipeline Configuration
+# ===============================
+
+# SOMA-X body model settings
+soma:
+  install: "pip install py-soma-x"
+  num_joints: 77
+  identity_model: "mhr"  # mhr, anny, smplx, soma_shape
+
+# GEM-X: Video to Motion
+gem:
+  repo: "https://github.com/NVlabs/GEM-X"
+  device: "cuda:0"
+  output_format: "bvh"  # SOMA BVH format
+  # GEM recovers full 77-joint SOMA motion from monocular video
+  # Includes bundled 2D pose estimator for SOMA skeleton
+  camera_mode: "dynamic"  # "static" or "dynamic"
+  world_space: true  # recover global trajectory
+
+# Kimodo: Text to Motion
+kimodo:
+  repo: "https://github.com/nv-tlabs/kimodo"
+  device: "cuda:0"
+  # Available models (March 2026 release):
+  #   Kimodo-SOMA-RP-v1, Kimodo-SOMA-SEED-v1 (SOMA skeleton)
+  #   Kimodo-G1-RP-v1, Kimodo-G1-SEED-v1 (G1 skeleton)
+  #   Kimodo-SMPLX-RP-v1 (SMPL-X skeleton)
+  model: "Kimodo-G1-SEED-v1"  # Direct G1 output
+  skeleton: "g1"  # "soma", "g1", "smplx"
+  output_format: "csv"  # "npz" or "csv" (MuJoCo qpos for G1)
+  vram_required_gb: 17
+
+# SOMA Retargeter: SOMA BVH -> G1 CSV
+soma_retargeter:
+  repo: "https://github.com/NVIDIA/soma-retargeter"
+  # Uses Newton physics engine + NVIDIA Warp for GPU IK
+  input_skeleton: "soma"
+  output_robot: "g1"
+  output_dof: 29  # G1 29-DOF configuration
+  # Retargeting features:
+  #   - Proportional human-to-robot scaling
+  #   - Multi-objective IK with joint limits
+  #   - Feet stabilization (ground contact)
+  #   - Per-DOF joint limit clamping
+  viewer: true  # OpenGL viewer (source SOMA + retargeted G1)
+  batch_mode: false  # Set true for headless batch conversion
+
+# ProtoMotions: RL Policy Training
+protomotions:
+  repo: "https://github.com/NVlabs/ProtoMotions"
+  # Supported frameworks:
+  #   - Isaac Lab 2.3.0 (recommended)
+  #   - IsaacGym Preview 4
+  #   - Newton (e7a737c)
+  #   - MuJoCo 3.0+
+  #   - Genesis (untested)
+  framework: "isaac_lab"
+  device: "cuda:0"
+  num_envs: 4096
+  # Training scale: 40+ hours AMASS in ~12 hours on 4x A100
+  # BONES-SEED: 13K motions/GPU tested on 24x A100
+  training:
+    algorithm: "PPO"
+    max_iterations: 5000
+    num_gpus: 1
+    motion_source: "g1_csv"  # from retargeter or Kimodo G1 output
+  # Retargeting built-in via PyRoki (AMASS -> any robot)
+  retarget_method: "pyroki"
+  # Export
+  export_format: "onnx"  # for deployment
+  # Sim2Sim validation
+  sim2sim:
+    enabled: true
+    target_engine: "mujoco"  # validate in MuJoCo before real robot
+
+# GEAR-SONIC: Real Robot Deployment
+gear_sonic:
+  repo: "https://github.com/NVlabs/GR00T-WholeBodyControl"
+  robot: "unitree_g1"
+  robot_ip: "192.168.123.161"
+  # Deployment features:
+  #   - C++ inference stack for real hardware
+  #   - VR teleoperation (PICO headset)
+  #   - Multiple locomotion styles (walk, run, crawl, stealth)
+  #   - Keyboard/gamepad/ZMQ control
+  policy_path: "data/policies/policy.onnx"
+  control_hz: 50
+  # Pretrained SONIC foundation policy available
+  use_pretrained: false
+
+# BONES-SEED Dataset
+bones_seed:
+  description: "142K+ production-quality optical mocap motions"
+  formats: ["soma_bvh", "g1_csv"]
+  hours: "hundreds"
+  # Publicly available for training
